@@ -1,116 +1,105 @@
 # Control de Tráfico con Reinforcement Learning en SUMO 🚦🧠
 
-Este proyecto forma parte de una tesis universitaria orientada a la optimización del control de tráfico utilizando métodos de Aprendizaje por Refuerzo (RL) y Multi-Agent Reinforcement Learning (MARL) en el simulador SUMO.
+Este proyecto forma parte de una tesis orientada a la optimización del control de tráfico en la ciudad de Osorno utilizando métodos de Multi-Agent Reinforcement Learning (MARL) en el simulador SUMO.
 
-## Arquitectura del Sistema
+El repositorio implementa una arquitectura robusta basada en **MaskablePPO con Parameter Sharing**, incorporando técnicas avanzadas de observación (OPW) y recompensas basadas en presión y alineamiento de vecindario (inspirado en CityLight / HAPS-PPO).
 
-```text
-[ SUMO (Simulador de Tráfico) ]
-           ^   |
- (Acciones)|   |(Observaciones & Recompensas)
-           |   v
-[ TrafficEnv / MultiAgentTrafficEnv ]
-           ^   |
-           |   | (Estados, Recompensas)
-           |   v
-[ Agentes de RL (SB3 / PyTorch) ]
-   - Centralizado
-   - Independiente (MARL)
-   - Parameter Sharing (MARL)
-```
+## 🚀 Características Principales
 
-## Prerrequisitos
-- Python 3.10+
-- SUMO (Simulation of Urban MObility) 1.18+
-- Docker (opcional)
+*   **Arquitectura MARL Parameter Sharing**: Todos los agentes (semáforos) comparten la misma red neuronal mediante `MaskablePPO` (evitando elegir fases inválidas) y `VecNormalize` (estabilizando las recompensas).
+*   **MDP v2 (Markov Decision Process)**:
+    *   **Observación (OPW v2)**: *Observation Padding Wrapper* que estandariza intersecciones heterogéneas (diferente número de carriles y fases) en un vector de tamaño fijo con máscaras de validez y codificación *one-hot* topológica.
+    *   **Recompensa Modular (CityLight)**: Combina penalización por colas, presión local (MaxPressure) y *neighborhood blending* (presión media de los vecinos) para fomentar la cooperación regional y evitar el *gridlock*.
+*   **Control Determinista de Fases**: Los agentes controlan completamente los semáforos a través de máquinas de estado dedicadas (`TrafficSignal`), desactivando el programa estático de SUMO para evitar interferencias. Respetan restricciones físicas duras como tiempos mínimos/máximos de verde y transiciones amarillas.
+*   **Baselines Integrados**: Evaluación comparativa rigurosa contra políticas clásicas (Tiempo Fijo estático, MaxPressure, Random) a través de múltiples semillas y niveles de demanda.
 
-## Instalación
+## 📋 Prerrequisitos
 
-### Opción 1: Instalación Local
-1. Clona el repositorio
+*   Python 3.10+
+*   [SUMO](https://eclipse.dev/sumo/) (Simulation of Urban MObility) instalado y configurado.
+*   Variable de entorno `SUMO_HOME` apuntando al directorio de instalación de SUMO.
+
+## 🛠️ Instalación
+
+1. Clona el repositorio:
+   ```bash
+   git clone https://github.com/javreyes71/MT.git
+   cd MT
+   ```
+
 2. Crea un entorno virtual e instala las dependencias:
    ```bash
    python -m venv venv
-   source venv/bin/activate  # En Windows: venv\Scripts\activate
+   # Activar en Windows:
+   venv\Scripts\activate
+   # Activar en Linux/Mac:
+   source venv/bin/activate
+   
    pip install -r requirements.txt
    ```
-3. Asegúrate de tener la variable de entorno `SUMO_HOME` configurada.
 
-### Opción 2: Docker
-El proyecto cuenta con un `Dockerfile` y un `docker-compose.yml` para facilitar la ejecución de pruebas y entrenamientos de manera aislada.
+## 🎮 Uso del Proyecto
 
-## Uso
-
-### Entrenamiento
-El script de entrenamiento soporta tres modos de agentes. Puedes correrlos mediante Docker Compose o de manera local:
-
+### 1. Generación de Tráfico
+Genera rutas para distintos niveles de demanda (bajo, medio, alto) y distintas semillas:
 ```bash
-# Modo Centralizado
-python scripts/train.py --mode centralized --timesteps 500000
-
-# Modo Independiente
-python scripts/train.py --mode independent --timesteps 500000
-
-# Parameter Sharing
-python scripts/train.py --mode parameter_sharing --timesteps 500000
-```
-*(Añade la flag `--gui` si quieres ver el entrenamiento en SUMO-GUI).*
-
-### Evaluación y Línea Base
-Puedes probar una línea base sin aprendizaje por refuerzo:
-```bash
-python scripts/baseline.py --episodes 10 --gui
+python scripts/generate_traffic.py
 ```
 
-Para evaluar un modelo entrenado:
+### 2. Entrenamiento (RL)
+Entrena el modelo usando Parameter Sharing (MaskablePPO):
 ```bash
-python scripts/evaluate.py --mode centralized --model models/centralized/final.zip --episodes 5
+python scripts/train.py --timesteps 1000000
+```
+*(Opcional: añade `--gui` para visualizar la simulación en tiempo real).*
+
+Puedes monitorear el entrenamiento en vivo:
+```bash
+tensorboard --logdir tensorboard
 ```
 
-### Visualización
+### 3. Evaluación (RL vs Baselines)
+Evalúa las políticas base o los modelos entrenados a lo largo de todas las demandas y semillas, generando una tabla comparativa y exportando a CSV:
+
 ```bash
-python scripts/visualize.py --mode centralized --model models/centralized/final.zip
+# Evaluar todas las políticas base (Tiempo Fijo, MaxPressure, Random)
+python scripts/evaluate.py --all
+
+# Evaluar solo MaxPressure
+python scripts/evaluate.py --policy max_pressure
+
+# (Próximamente) Evaluar modelo RL:
+# python scripts/evaluate.py --policy rl --model models/maskable_ppo_final
 ```
 
-### Generación de Tráfico
-```bash
-python scripts/generate_traffic.py --emergency
-```
+## ⚙️ Configuración (`config/default.yaml`)
 
-## Configuración
-La configuración se maneja principalmente mediante archivos YAML en `config/`.
-Ejemplo:
-- `simulation`: Parámetros de SUMO, archivos de red y tiempos.
-- `training`: Algoritmo a usar (PPO por defecto), timesteps, semillas.
-- `marl`: Modo multagente (`centralized`, `independent`, `parameter_sharing`).
-- `paths`: Carpetas de salida (`models/`, `results/`).
+Toda la lógica de entrenamiento y recompensas se maneja a través de un YAML.
+*   `simulation`: Archivos de red, pasos de simulación, $g_{min}$, $g_{max}$, tiempos amarillos.
+*   `training`: Hiperparámetros de MaskablePPO (batch size, learning rate, gamma=0.99, ent_coef).
+*   `reward`: Componentes de recompensa ajustables independientemente (congestión, presión, vecindario).
+*   `marl`: Radio de comunicación para observación de vecinos.
 
-## Estructura del Proyecto
+## 🏗️ Estructura del Proyecto
 
 ```text
-Control-de-Trafico-con-RL-en-SUMO/
-├── config/             # Archivos YAML de configuración
-├── models/             # Modelos entrenados guardados (Ignorado en git)
-├── results/            # Métricas y CSVs (Ignorado en git)
-├── scripts/            # Scripts de ejecución (train, eval, baseline, etc.)
-├── src/                # Código fuente principal
-│   ├── agents/         # Implementaciones de agentes (centralizado, MARL)
-│   ├── callbacks/      # Callbacks de SB3
-│   ├── environment/    # Entornos y wrappers (TrafficSumoEnv)
-│   ├── rewards/        # Lógica modular de recompensas
-│   └── utils/          # Utilidades (config, seed, metrics)
-├── sumo/               # Archivos nativos de SUMO (.net.xml, .rou.xml, etc.)
-├── tensorboard/        # Logs de Tensorboard
-├── tests/              # Pruebas automatizadas (pytest)
-├── Dockerfile          # Configuración para la imagen Docker
-├── docker-compose.yml  # Servicios para correr diferentes experimentos
-├── requirements.txt    # Dependencias de Python
-└── README.md           # Este archivo
+├── config/             # Configuración centralizada YAML
+├── scripts/            # Scripts ejecutables (train.py, evaluate.py, etc.)
+├── src/                
+│   ├── agents/         # Implementación MARL (Parameter Sharing)
+│   ├── baselines/      # Políticas base: FixedTime, MaxPressure, Random
+│   ├── environment/    # MultiAgentTrafficEnv, TrafficSignal, OPW
+│   ├── rewards/        # Sistema modular de recompensa (Congestion, Pressure, etc.)
+│   └── utils/          # Grafo de red (NetworkGraph), parseadores, configuración
+├── sumo/               # Archivos nativos de la simulación (.net.xml, .rou.xml, etc.)
+└── tests/              # Batería de pruebas automatizadas (pytest)
 ```
 
-## Ejecución de Pruebas Automáticas (Tests)
-Utilizamos `pytest` para las pruebas unitarias:
+## 🧪 Pruebas Automatizadas (Testing)
+
+El repositorio cuenta con una extensa suite de tests unitarios (56 tests) que verifican desde las matemáticas del MDP v2 y observación heterogénea (OPW), hasta las restricciones estrictas de cambio de semáforos.
+
+Para ejecutar la batería de pruebas:
 ```bash
-pytest tests/
+pytest tests/ -v
 ```
-Esto correrá las pruebas para observaciones, sistema modular de recompensas y vehículos de emergencia.
