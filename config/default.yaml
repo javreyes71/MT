@@ -1,0 +1,58 @@
+simulation:
+  net_file: "sumo/network.net.xml"
+  config_file: "sumo/simulation.sumocfg"
+  delta_time: 5.0
+  min_phase_time: 15.0     # Hard constraint: mínimo 15s de verde
+  max_phase_time: 35.0     # Hard constraint: máximo 35s para evitar starvation
+  yellow_time: 3.0         # Hard constraint: amarillo fijo obligatorio
+  duration: 3600           # Episodio completo en segundos simulados
+
+training:
+  algorithm: "PPO"
+  policy: "MlpPolicy"
+  learning_rate: 0.0003
+  lr_decay: "linear"
+  n_steps: 256
+  batch_size: 128
+  gamma: 0.99              # Por decisión (no por agente-paso)
+  ent_coef: 0.01
+  n_epochs: 5
+  gae_lambda: 0.95
+  max_grad_norm: 0.5
+  vf_coef: 0.5
+  clip_range: 0.2
+  total_timesteps: 1000000
+  eval_freq: 50000
+  checkpoint_freq: 10000
+  seed: 42
+
+reward:
+  components:
+    congestion:
+      enabled: true
+      halt_weight: 0.5
+      wait_penalty_weight: 0.5
+      wait_threshold: 20.0
+    pressure:
+      enabled: true
+      pressure_weight: 1.0
+    neighborhood:
+      enabled: true
+      local_weight: 1.0
+      neighbor_weight: 0.3      # β ≈ 0.3 (CityLight)
+    stability:
+      enabled: true
+      change_penalty: 0.05
+    emissions:
+      enabled: false
+      co2_weight: 0.001
+
+marl:
+  mode: "parameter_sharing"
+  neighbor_observation: true
+  communication_radius: 1
+
+paths:
+  models_dir: "models"
+  results_dir: "results"
+  tensorboard_dir: "tensorboard"

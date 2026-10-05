@@ -1,13 +1,33 @@
-BASURA_OLD/
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# Entrenamiento
 models/
 tensorboard/
 results/
+
+# SUMO
 *.log
-venv/
-models/
-tensorboard/
-__pycache__/
-*.pyc
+sumo/*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docker
+.dockerignore
+
+# OS
 .DS_Store
-*.log
+Thumbs.db
+
+# Datos grandes (ya están en el repo)
+# sumo/network.net.xml
+# sumo/routes.rou.xml
+# sumo/map.osm

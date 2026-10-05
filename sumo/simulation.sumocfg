@@ -1,0 +1,22 @@
+<configuration>
+    <input>
+        <net-file value="network.net.xml"/>
+        <!-- Este valor puede ser sobreescrito por TraCI/entorno -->
+        <route-files value="routes_medio_42.rou.xml"/>
+    </input>
+    <time>
+        <begin value="0"/>
+        <end value="3600"/>
+    </time>
+    <processing>
+        <time-to-teleport value="300"/>
+        <waiting-time-memory value="1000"/>
+    </processing>
+    <report>
+        <no-step-log value="true"/>
+    </report>
+    <output>
+        <tripinfo-output value="../results/tripinfo.xml"/>
+        <summary-output value="../results/summary.xml"/>
+    </output>
+</configuration>

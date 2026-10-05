@@ -1,23 +1,41 @@
 # visualize.py
 import time
 import os
+import argparse
+import glob
 from stable_baselines3 import PPO
 from traffic_env_sumo import TrafficSumoEnv
 
-MODEL_PATH = "models/ppo_multi_agent/ppo_multi_250000"
+def get_latest_model(models_dir="models/ppo_multi_agent"):
+    list_of_files = glob.glob(f"{models_dir}/*.zip")
+    if not list_of_files:
+        return None
+    latest_file = max(list_of_files, key=os.path.getctime)
+    return latest_file.replace(".zip", "")
 
 def main():
-    if not os.path.exists(f"{MODEL_PATH}.zip"):
-        print(f"❌ No encuentro {MODEL_PATH}.zip. Verifica la carpeta models/"); return
+    parser = argparse.ArgumentParser(description="Visualizar el agente de tráfico en SUMO.")
+    parser.add_argument("--model", type=str, default=None, help="Ruta al modelo (sin .zip). Por defecto, el último guardado.")
+    args = parser.parse_args()
 
-    print("🔵 Generando tráfico nuevo y abriendo visualizador...")
+    model_path = args.model
+    if model_path is None:
+        model_path = get_latest_model()
+        if model_path is None:
+            print("❌ No se encontraron modelos en la carpeta models/ppo_multi_agent/")
+            return
+        print(f"🔵 Usando el último modelo encontrado: {model_path}")
+
+    if not os.path.exists(f"{model_path}.zip"):
+        print(f"❌ No encuentro {model_path}.zip. Verifica la ruta del modelo."); return
+
+    print("🔵 Abriendo visualizador (el entorno generará el estado)...")
     env = TrafficSumoEnv(gui=True)
-    env.setup()
     
     try:
-        model = PPO.load(MODEL_PATH)
-    except:
-        print("❌ Error cargando modelo. Asegúrate de que coincida con el código actual.")
+        model = PPO.load(model_path)
+    except Exception as e:
+        print(f"❌ Error cargando modelo. Asegúrate de que coincida con el código actual. Detalles: {e}")
         return
 
     obs, _ = env.reset()

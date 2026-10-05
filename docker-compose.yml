@@ -1,0 +1,35 @@
+services:
+  baseline:
+    build: .
+    command: python scripts/baseline.py --episodes 10
+    volumes:
+      - ./results:/app/results
+    
+  train-centralized:
+    build: .
+    command: python scripts/train.py --mode centralized --timesteps 500000
+    volumes:
+      - ./results:/app/results
+      - ./models:/app/models
+      - ./tensorboard:/app/tensorboard
+
+  train-independent:
+    build: .
+    command: python scripts/train.py --mode independent --timesteps 500000
+    volumes:
+      - ./results:/app/results
+      - ./models:/app/models
+
+  train-parameter-sharing:
+    build: .
+    command: python scripts/train.py --mode parameter_sharing --timesteps 500000
+    volumes:
+      - ./results:/app/results
+      - ./models:/app/models
+
+  evaluate:
+    build: .
+    command: python scripts/evaluate.py --mode centralized --episodes 10
+    volumes:
+      - ./results:/app/results
+      - ./models:/app/models

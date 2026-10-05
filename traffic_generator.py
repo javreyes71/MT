@@ -34,7 +34,11 @@ def generate_routefile(net_file="network.net.xml", output_file="routes.rou.xml",
         "--random"              
     ]
     
-    subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    try:
+        subprocess.run(cmd, check=True)
+        print(f"✅ Rutas generadas exitosamente en '{output_file}'!")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error al generar rutas: {e}")
 
 if __name__ == "__main__":
     generate_routefile()
