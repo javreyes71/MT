@@ -64,7 +64,7 @@ def parse_tripinfo(tripinfo_path: str) -> dict:
 
 
 def run_episode(env: TrafficSumoEnv, policy, seed: int) -> dict:
-    """Corre un episodio completo con una política y retorna métricas."""
+    """Corre un episodio completo con una política y retorna métricas brutas."""
     env.reset()
     total_reward = 0.0
     steps = 0
@@ -80,13 +80,7 @@ def run_episode(env: TrafficSumoEnv, policy, seed: int) -> dict:
         if terminated or truncated:
             break
 
-    tripinfo_path = os.path.join("results", "tripinfo.xml")
-    metrics = parse_tripinfo(tripinfo_path)
-    metrics["total_reward"] = total_reward
-    metrics["steps"] = steps
-    metrics["seed"] = seed
-
-    return metrics
+    return {"total_reward": total_reward, "steps": steps, "seed": seed}
 
 
 def evaluate_policy(policy, config: dict, levels: list, seeds: list) -> pd.DataFrame:
@@ -109,20 +103,29 @@ def evaluate_policy(policy, config: dict, levels: list, seeds: list) -> pd.DataF
             t0 = time.time()
 
             try:
-                metrics = run_episode(env, policy, seed)
-                metrics["level"] = level
-                metrics["policy"] = policy.name
-                elapsed = time.time() - t0
-                metrics["wall_time"] = elapsed
-                results.append(metrics)
-
-                avg_w = metrics.get("avg_wait", -1)
-                n = metrics.get("n_trips", 0)
-                print(f"trips={n} avg_wait={avg_w:.1f}s ({elapsed:.1f}s)")
+                base_metrics = run_episode(env, policy, seed)
             except Exception as e:
                 print(f"ERROR: {e}")
+                continue
             finally:
+                # IMPORTANTE: Cerrar el entorno hace que SUMO termine de escribir el XML
                 env.close()
+
+            # Parsear tripinfo AHORA que SUMO lo cerró correctamente
+            tripinfo_path = os.path.join("results", "tripinfo.xml")
+            metrics = parse_tripinfo(tripinfo_path)
+            
+            # Combinar métricas
+            metrics.update(base_metrics)
+            metrics["level"] = level
+            metrics["policy"] = policy.name
+            elapsed = time.time() - t0
+            metrics["wall_time"] = elapsed
+            results.append(metrics)
+
+            avg_w = metrics.get("avg_wait", -1)
+            n = metrics.get("n_trips", 0)
+            print(f"trips={n} avg_wait={avg_w:.1f}s ({elapsed:.1f}s)")
 
     return pd.DataFrame(results)
 
