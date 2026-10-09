@@ -5,6 +5,9 @@ cabezales de política especializados para cada grupo.
 """
 from typing import Dict, List, Tuple
 from collections import defaultdict
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class IntersectionGrouper:
@@ -33,9 +36,9 @@ class IntersectionGrouper:
             self.groups[n_actions].append(tls_id)
             self.tls_to_group[tls_id] = n_actions
         
-        print(f"📊 DMSGL: {len(self.groups)} grupo(s) de intersecciones detectados:")
+        logger.info(f"DMSGL: {len(self.groups)} grupo(s) de intersecciones detectados:")
         for n_actions, members in sorted(self.groups.items()):
-            print(f"   Grupo {n_actions}-fases: {len(members)} intersecciones")
+            logger.info(f"   Grupo {n_actions}-fases: {len(members)} intersecciones")
     
     def get_group(self, tls_id: str) -> int:
         """Retorna el ID de grupo (número de acciones) para un semáforo."""

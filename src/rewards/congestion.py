@@ -27,15 +27,34 @@ class CongestionPenalty(RewardComponent):
         self.wait_weight = wait_penalty_weight
         self.wait_threshold = wait_threshold
 
+    def calculate_agent(self, agent_id: str, agent_info: Dict[str, Any], global_info: Dict[str, Any]) -> float:
+        """Penalización individual por congestión en este semáforo."""
+        halts = agent_info.get("halts", 0)
+        wait = agent_info.get("wait", 0.0)
+        capacity = agent_info.get("capacity", 1.0)
+
+        # Cola normalizada por capacidad del semáforo
+        norm_halt = halts / max(capacity, 1.0)
+
+        # Exceso de espera normalizado
+        norm_wait = max(0.0, wait - self.wait_threshold) / max(self.wait_threshold, 1.0)
+
+        return -(norm_halt * self.halt_weight + norm_wait * self.wait_weight)
+
     def calculate(self, env_info: Dict[str, Any]) -> float:
+        """Global: usa agents_info si existe, sino fallback a halt_counts/wait_times legacy."""
+        agents_info = env_info.get("agents_info", {})
+        if agents_info:
+            total = sum(self.calculate_agent(aid, info, env_info) for aid, info in agents_info.items())
+            return total / max(len(agents_info), 1)
+
+        # Fallback legacy (para tests y entornos mono-agente)
         halt_counts = env_info.get("halt_counts", [])
         wait_times = env_info.get("wait_times", [])
         num_lanes = max(len(halt_counts), 1)
 
-        # Media de vehículos detenidos por carril
         avg_halt = sum(halt_counts) / num_lanes
 
-        # Media de exceso de espera por carril
         excess = [
             (wt - self.wait_threshold) / max(self.wait_threshold, 1.0)
             for wt in wait_times

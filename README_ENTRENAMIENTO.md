@@ -5,7 +5,7 @@
 Antes de ejecutar cualquier comando, abre una **terminal PowerShell en VSCode** (`Ctrl+ñ`) y navega a la carpeta del proyecto:
 
 ```powershell
-cd "c:\Users\javie\Desktop\MT\CODE\Control-de-Trafico-con-RL-en-SUMO"
+cd "c:\Users\Ress\Desktop\MT"
 ```
 
 ---
@@ -25,6 +25,8 @@ $env:PYTHONIOENCODING="utf-8"
 .\venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
+Se esperan **52 tests** pasando.
+
 ---
 
 ## Paso 1: Generar Tráfico (solo si cambiaste el mapa)
@@ -33,26 +35,34 @@ $env:PYTHONIOENCODING="utf-8"
 .\venv\Scripts\python.exe scripts/generate_traffic.py
 ```
 
+Genera archivos de rutas para 3 niveles de demanda (bajo, medio, alto) × múltiples semillas en `sumo/`.
+
 ---
 
-## Paso 2: Ejecutar Baseline (Control Cíclico Tradicional)
+## Paso 2: Ejecutar Baselines (Evaluación de referencia)
 
-Genera los datos de referencia (3 episodios de semáforos con tiempos fijos):
+Evalúa todas las políticas base (Tiempo Fijo, MaxPressure, Random) en todas las demandas y semillas:
 
 ```powershell
-.\venv\Scripts\python.exe scripts/baseline.py --episodes 3
+.\venv\Scripts\python.exe scripts/evaluate.py --policy all
 ```
 
-Resultados en: `results/baseline/`
+Resultados en: `results/evaluation.csv`
 
 ---
 
-## Paso 3: Entrenamiento MAPPO por Fases (Entrenamiento Corto/Recomendado)
+## Paso 3: Entrenamiento MaskablePPO por Fases (Recomendado)
 
-Para monitorear mejor el aprendizaje y guardar puntos de control (`checkpoints`) con mayor frecuencia, configuramos 500,000 pasos divididos en 10 fases (cada fase guarda un modelo cada ~15-30 minutos).
+Para monitorear el aprendizaje y guardar checkpoints frecuentes, usa el entrenamiento por fases. Cada fase guarda un modelo independiente.
 
+**Entrenamiento corto (prueba):**
 ```powershell
-.\venv\Scripts\python.exe scripts/train_phased.py --mode parameter_sharing --total-steps 500000 --phases 10
+.\venv\Scripts\python.exe scripts/train_phased.py --total-steps 500000 --phases 10
+```
+
+**Entrenamiento largo (noche):**
+```powershell
+.\venv\Scripts\python.exe scripts/train_phased.py --total-steps 1500000 --phases 15
 ```
 
 | Fase | Pasos acumulados | Modelo guardado |
@@ -61,7 +71,10 @@ Para monitorear mejor el aprendizaje y guardar puntos de control (`checkpoints`)
 | ...  | ...             | ... |
 | 10   | 500,000         | `models/parameter_sharing/model_phase_10.zip` |
 
-**Nota:** Si deseas un entrenamiento de noche (largo), puedes usar `--total-steps 1500000 --phases 15`.
+**Alternativa — Entrenamiento directo (sin fases):**
+```powershell
+.\venv\Scripts\python.exe scripts/train.py --timesteps 1000000
+```
 
 ---
 
@@ -77,12 +90,27 @@ Modelos en: `models/finetune/model_finetune_phase_X.zip`
 
 ---
 
-## Paso 5: Visualización Gráfica (Ver el aprendizaje en vivo)
+## Paso 5: Evaluación RL vs Baselines
+
+Evaluar el modelo entrenado contra todas las políticas base:
+
+```powershell
+.\venv\Scripts\python.exe scripts/evaluate.py --policy all --model_path models/parameter_sharing/model_phase_10.zip
+```
+
+Para evaluar solo el modelo RL:
+```powershell
+.\venv\Scripts\python.exe scripts/evaluate.py --policy rl --model_path models/parameter_sharing/model_phase_10.zip
+```
+
+---
+
+## Paso 6: Visualización en SUMO (Ver el agente en acción)
 
 Para ver a los semáforos actuando en tiempo real con la interfaz gráfica de SUMO:
 
 ```powershell
-.\venv\Scripts\python.exe scripts/evaluate.py --mode parameter_sharing --model-path models/parameter_sharing/model_phase_10 --gui
+.\venv\Scripts\python.exe scripts/evaluate.py --policy rl --model_path models/parameter_sharing/model_phase_10.zip --gui
 ```
 
 ⚠️ **Importante:**
@@ -91,7 +119,7 @@ Para ver a los semáforos actuando en tiempo real con la interfaz gráfica de SU
 
 ---
 
-## Paso 6: Generar Reporte PDF y Gráficas
+## Paso 7: Generar Reporte PDF y Gráficas
 
 ```powershell
 .\venv\Scripts\python.exe scripts/compare_results.py
@@ -102,7 +130,7 @@ PDF generado en: `results/reporte_resultados.pdf`
 
 ---
 
-## Paso 7: Ver Curvas de Entrenamiento en TensorBoard
+## Paso 8: Ver Curvas de Entrenamiento en TensorBoard
 
 ```powershell
 .\venv\Scripts\python.exe -m tensorboard.main --logdir tensorboard
@@ -112,3 +140,8 @@ Luego abre en tu navegador: `http://localhost:6006`
 
 ---
 
+## 📌 Notas Técnicas
+
+- **Algoritmo:** MaskablePPO con Parameter Sharing (no es MAPPO). Un único PPO con action masking compartido entre todos los agentes.
+- **Recompensa activa por defecto:** `EcoDelayReward` — equilibra delay y emisiones CO₂. Se configura en `config/default.yaml`.
+- **Multiplicador de pasos:** El `ParameterSharingVecEnv` multiplica los pasos de SUMO × número de agentes para PPO. `train_phased.py` compensa automáticamente.

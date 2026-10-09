@@ -1,0 +1,51 @@
+marl:
+  communication_radius: 1
+  mode: parameter_sharing
+  neighbor_observation: true
+paths:
+  models_large_dir: models_large
+  results_large_dir: results_large
+  tensorboard_large_dir: tensorboard_large
+reward:
+  components:
+    congestion:
+      enabled: false
+    eco_delay:
+      delay_weight: 0.1
+      eco_weight: 0.9
+      enabled: true
+    emissions:
+      enabled: false
+    neighborhood:
+      enabled: false
+    pressure:
+      enabled: false
+    stability:
+      enabled: false
+simulation:
+  config_file: sumo/simulation.sumocfg
+  delta_time: 5.0
+  duration: 3600
+  max_phase_time: 35.0
+  min_phase_time: 15.0
+  net_file: sumo/caso_estudio.net.xml
+  route_files: sumo/caso_estudio_medio_42.rou.xml
+  yellow_time: 3.0
+training:
+  algorithm: PPO
+  batch_size: 1024
+  checkpoint_freq: 100000
+  clip_range: 0.2
+  ent_coef: 0.05
+  eval_freq: 500000
+  gae_lambda: 0.95
+  gamma: 0.99
+  learning_rate: 0.0003
+  lr_decay: linear
+  max_grad_norm: 0.5
+  n_epochs: 5
+  n_steps: 1024
+  policy: MlpPolicy
+  seed: 42
+  total_timesteps: 300000000
+  vf_coef: 0.5

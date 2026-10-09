@@ -78,7 +78,7 @@ class MultiAgentTrafficEnv:
         )
 
         obs = {aid: self._get_local_obs(aid) for aid in self.agent_ids}
-        rewards = {aid: global_reward for aid in self.agent_ids}
+        rewards = base_info.get("rewards_dict", {aid: global_reward for aid in self.agent_ids})
         terminateds = {aid: terminated for aid in self.agent_ids}
         truncateds = {aid: truncated for aid in self.agent_ids}
         infos = {aid: base_info for aid in self.agent_ids}
@@ -87,7 +87,7 @@ class MultiAgentTrafficEnv:
 
     def _get_local_obs(self, agent_id: str) -> np.ndarray:
         """Construye la observación MDP v2 usando OPW.build_observation."""
-        import traci
+        import libsumo as traci
 
         ts = self.base_env.signals[agent_id]
         max_lanes = self.base_env.max_lanes
@@ -200,7 +200,15 @@ class MultiAgentTrafficEnv:
         """Retorna la máscara de acciones válidas para MaskablePPO."""
         ts = self.base_env.signals[agent_id]
         mask = np.zeros(self.max_phases, dtype=np.float32)
-        mask[:ts.num_green_phases] = 1.0
+        
+        if ts.can_act():
+            # Si puede actuar, puede elegir cualquier fase verde válida
+            mask[:ts.num_green_phases] = 1.0
+        else:
+            # Si NO puede actuar (está en amarillo o no cumplió g_min),
+            # la única acción válida es mantener la fase actual.
+            mask[ts.current_green_idx] = 1.0
+            
         return mask
 
     @property

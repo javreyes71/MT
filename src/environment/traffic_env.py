@@ -1,16 +1,20 @@
-"""Entorno Gymnasium para control de semáforos en SUMO.
+"""Entorno Gymnasium para control de semÃ¡foros en SUMO.
 
-Versión v2: usa TrafficSignal por TLS para que SUMO nunca controle
-las fases autónomamente (corrige B1).  Cada TLS tiene su propia
-máquina de estados verde↔amarillo con g_min/g_max reales.
+VersiÃ³n v2: usa TrafficSignal por TLS para que SUMO nunca controle
+las fases autÃ³nomamente (corrige B1).  Cada TLS tiene su propia
+mÃ¡quina de estados verdeâ†”amarillo con g_min/g_max reales.
 """
 
 import gymnasium as gym
 from gymnasium import spaces
-import traci
+import os
 import sumolib
 import numpy as np
-import os
+
+if os.environ.get("USE_TRACI", "0") == "1":
+    import traci
+else:
+    import libsumo as traci
 import sys
 import logging
 from typing import Tuple, Dict, Any, Optional, List
@@ -23,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class TrafficSumoEnv(gym.Env):
-    """Entorno multi-semáforo con control de fases propio (patrón SUMO-RL)."""
+    """Entorno multi-semÃ¡foro con control de fases propio (patrÃ³n SUMO-RL)."""
 
     def __init__(self, config: dict = None, gui: bool = False):
         super().__init__()
@@ -76,7 +80,7 @@ class TrafficSumoEnv(gym.Env):
             if not progs:
                 continue
 
-            # Solo incluir TLS con ≥2 fases verdes
+            # Solo incluir TLS con â‰¥2 fases verdes
             prog = progs.get("0", next(iter(progs.values())))
             n_greens = sum(
                 1
@@ -103,12 +107,12 @@ class TrafficSumoEnv(gym.Env):
 
         if self.num_agents == 0:
             raise ValueError(
-                "No se encontraron semáforos controlables con >=2 fases verdes."
+                "No se encontraron semÃ¡foros controlables con >=2 fases verdes."
             )
 
         logger.info(f"Semaforos controlados: {self.num_agents}")
 
-        # Dimensiones de acción por TLS
+        # Dimensiones de acciÃ³n por TLS
         self.action_dims: List[int] = [
             self.signals[tid].num_green_phases for tid in self.tls_ids
         ]
@@ -145,23 +149,35 @@ class TrafficSumoEnv(gym.Env):
     # ==================================================================
     # Setup / Reset
     # ==================================================================
-    def setup(self) -> None:
+    def setup(self, seed: Optional[int] = None) -> None:
         try:
             traci.close()
         except Exception:
             pass
 
-        seed = self.config.get("training", {}).get("seed", 42)
+        if seed is None:
+            seed = self.config.get("training", {}).get("seed", 42)
+            
         cmd = [
             self._sumo_binary,
             "-c", self.config_file,
+            "-n", self.net_file,
             "--seed", str(seed),
+            "--no-step-log", "true",
+            "--no-warnings", "true",
             "--start",
         ]
+        
+        sim_config = self.config.get("simulation", {})
+        if "route_files" in sim_config:
+            cmd.extend(["--route-files", sim_config["route_files"]])
+        if "tripinfo_output" in sim_config:
+            cmd.extend(["--tripinfo-output", sim_config["tripinfo_output"]])
+
         traci.start(cmd)
         self.connection = traci
 
-        # Inicializar cada TrafficSignal: desactivar programa estático
+        # Inicializar cada TrafficSignal: desactivar programa estÃ¡tico
         for tid in self.tls_ids:
             self.signals[tid].init_at_reset(traci)
 
@@ -171,7 +187,7 @@ class TrafficSumoEnv(gym.Env):
         options: Optional[Dict[str, Any]] = None,
     ) -> Tuple[np.ndarray, Dict[str, Any]]:
         super().reset(seed=seed)
-        self.setup()
+        self.setup(seed=seed)
         self.step_count = 0
         return self._get_observation(), {}
 
@@ -179,30 +195,32 @@ class TrafficSumoEnv(gym.Env):
     # Step
     # ==================================================================
     def step(
-        self, actions: List[int]
+        self, actions=None
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         self.step_count += 1
 
         # 1. Aplicar acciones a cada TLS
-        for i, tid in enumerate(self.tls_ids):
-            ts = self.signals[tid]
-            action = int(actions[i])
-            ts.apply_action(action, traci)
+        if actions is not None:
+            for i, tid in enumerate(self.tls_ids):
+                ts = self.signals[tid]
+                action = int(actions[i])
+                ts.apply_action(action, traci)
 
-        # 2. Avanzar la simulación delta_time segundos
+        # 2. Avanzar la simulaciÃ³n delta_time segundos
         steps = int(self.delta_time)
         for _ in range(steps):
             traci.simulationStep()
-            # Tick de las máquinas de estado (1 segundo por simulationStep)
+            # Tick de las mÃ¡quinas de estado (1 segundo por simulationStep)
             for tid in self.tls_ids:
                 self.signals[tid].tick(1.0, traci)
 
-        # 3. Observación y recompensa
+        # 3. ObservaciÃ³n y recompensa
         obs = self._get_observation()
         env_info = self.get_env_info()
-        reward = self.reward_manager.calculate_total(env_info)
+        rewards_dict = self.reward_manager.calculate_per_agent(env_info)
+        reward = sum(rewards_dict.values()) / max(len(rewards_dict), 1)
 
-        # 4. Terminación
+        # 4. TerminaciÃ³n
         total_vehicles = traci.vehicle.getIDCount()
         sim_time = traci.simulation.getTime()
         terminated = total_vehicles == 0 and self.step_count > 50
@@ -212,13 +230,14 @@ class TrafficSumoEnv(gym.Env):
             "vehicles": total_vehicles,
             "sim_time": sim_time,
             "env_info": env_info,
+            "rewards_dict": rewards_dict
         }
 
     # ==================================================================
-    # Observación
+    # ObservaciÃ³n
     # ==================================================================
     def _get_observation(self) -> np.ndarray:
-        """Observación normalizada en [-1, 1] o [0, 1].
+        """ObservaciÃ³n normalizada en [-1, 1] o [0, 1].
 
         Por TLS: [halt_counts(max_lanes), avg_in_occ, avg_out_occ,
                   phase_norm, time_in_phase_norm]
@@ -242,7 +261,7 @@ class TrafficSumoEnv(gym.Env):
                 halts.append(0.0)
             full_obs.extend(halts[: self.max_lanes])
 
-            # 2. Ocupación promedio entrante [0, 1]
+            # 2. OcupaciÃ³n promedio entrante [0, 1]
             try:
                 in_occs = [
                     traci.lane.getLastStepOccupancy(l) / 100.0 for l in ts.in_lanes
@@ -252,7 +271,7 @@ class TrafficSumoEnv(gym.Env):
                 avg_in = 0.0
             full_obs.append(avg_in)
 
-            # 3. Ocupación promedio saliente [0, 1]
+            # 3. OcupaciÃ³n promedio saliente [0, 1]
             try:
                 if ts.out_lanes:
                     out_occs = [
@@ -279,7 +298,8 @@ class TrafficSumoEnv(gym.Env):
     # Info para recompensa
     # ==================================================================
     def get_env_info(self) -> Dict[str, Any]:
-        """Información del entorno para el cálculo de recompensas."""
+        """InformaciÃ³n del entorno para el cÃ¡lculo de recompensas."""
+        agents_info = {}
         halt_counts: List[int] = []
         wait_times: List[float] = []
         total_co2 = 0.0
@@ -290,10 +310,19 @@ class TrafficSumoEnv(gym.Env):
         for tid in self.tls_ids:
             ts = self.signals[tid]
             try:
+                h = 0
+                w = 0.0
+                c = 0.0
                 for lane in ts.in_lanes:
-                    halt_counts.append(traci.lane.getLastStepHaltingNumber(lane))
-                    wait_times.append(traci.lane.getWaitingTime(lane))
-                    total_co2 += traci.lane.getCO2Emission(lane)
+                    h_l = traci.lane.getLastStepHaltingNumber(lane)
+                    w_l = traci.lane.getWaitingTime(lane)
+                    c_l = traci.lane.getCO2Emission(lane)
+                    halt_counts.append(h_l)
+                    wait_times.append(w_l)
+                    total_co2 += c_l
+                    h += h_l
+                    w += w_l
+                    c += c_l
 
                 in_veh = sum(
                     traci.lane.getLastStepVehicleNumber(l) for l in ts.in_lanes
@@ -310,16 +339,25 @@ class TrafficSumoEnv(gym.Env):
                     else 1.0
                 )
 
-                pressure = abs(
-                    in_veh / max(in_cap, 1.0) - out_veh / max(out_cap, 1.0)
-                )
+                # Fix H5: Eliminado el abs() para mantener la propiedad vectorial de Max-Pressure.
+                pressure = (in_veh / max(in_cap, 1.0)) - (out_veh / max(out_cap, 1.0))
                 tls_pressures[tid] = pressure
-                total_pressure += pressure
+                total_pressure += abs(pressure)
 
                 if ts.is_yellow:
                     changes += 1
+
+                agents_info[tid] = {
+                    "halts": h,
+                    "wait": w,
+                    "co2": c,
+                    "capacity": max(in_cap, 1.0),
+                    "pressure": pressure,
+                    "is_yellow": ts.is_yellow
+                }
             except Exception as e:
                 logger.warning(f"Error obteniendo info de {tid}: {e}")
+                agents_info[tid] = {"halts": 0, "wait": 0.0, "co2": 0.0, "capacity": 1.0, "pressure": 0.0, "is_yellow": False}
 
         try:
             throughput = traci.simulation.getArrivedNumber()
@@ -328,6 +366,7 @@ class TrafficSumoEnv(gym.Env):
 
         num_tls = len(self.tls_ids)
         return {
+            "agents_info": agents_info,
             "halt_counts": halt_counts,
             "wait_times": wait_times,
             "total_co2": total_co2,
@@ -349,3 +388,13 @@ class TrafficSumoEnv(gym.Env):
             traci.close()
         except Exception:
             pass
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if "connection" in state:
+            state["connection"] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+

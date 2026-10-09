@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.utils.config import load_config
 from src.environment.traffic_env import TrafficSumoEnv
 from src.environment.multi_agent_env import MultiAgentTrafficEnv
-from src.agents.centralized import CentralizedAgent
-from src.agents.independent import IndependentAgent
+# from src.agents.centralized import CentralizedAgent
+# from src.agents.independent import IndependentAgent
 from src.agents.parameter_sharing import ParameterSharingAgent
 
 def visualize(agent, env, config, mode):

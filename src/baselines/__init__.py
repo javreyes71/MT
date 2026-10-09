@@ -10,7 +10,7 @@ Políticas:
 """
 
 import numpy as np
-import traci
+import libsumo as traci
 from typing import Dict, List
 from abc import ABC, abstractmethod
 
@@ -64,29 +64,45 @@ class MaxPressurePolicy(BaselinePolicy):
         actions = {}
         for tid in agent_ids:
             ts = signals[tid]
+            
+            # Cachear los carriles que corresponden a cada fase verde
+            if not hasattr(ts, "_phase_in_lanes"):
+                ts._phase_in_lanes = []
+                ts._phase_out_lanes = []
+                links = traci.trafficlight.getControlledLinks(tid)
+                for state in ts.green_states:
+                    in_l = set()
+                    out_l = set()
+                    for idx, char in enumerate(state):
+                        if char in ("G", "g"):
+                            if idx < len(links) and links[idx]:
+                                for link in links[idx]:
+                                    in_l.add(link[0])
+                                    out_l.add(link[1])
+                    ts._phase_in_lanes.append(list(in_l))
+                    ts._phase_out_lanes.append(list(out_l))
+
             best_phase = 0
             best_pressure = -float("inf")
 
-            for phase_idx, green_state in enumerate(ts.green_states):
+            for phase_idx, state in enumerate(ts.green_states):
                 pressure = 0.0
-                for link_idx, signal_char in enumerate(green_state):
-                    if signal_char in ("G", "g"):
-                        # Buscar el carril de entrada de este link
-                        for lane in ts.in_lanes:
-                            try:
-                                veh = traci.lane.getLastStepVehicleNumber(lane)
-                                cap = ts.lane_capacity.get(lane, 10.0)
-                                pressure += veh / cap
-                            except Exception:
-                                pass
-                        break  # Simplificación: usar la presión total entrante
-
-                # Restar presión saliente
-                for lane in ts.out_lanes:
+                
+                # Presión entrante de esta fase
+                for lane in ts._phase_in_lanes[phase_idx]:
                     try:
                         veh = traci.lane.getLastStepVehicleNumber(lane)
                         cap = ts.lane_capacity.get(lane, 10.0)
-                        pressure -= veh / cap
+                        pressure += veh / max(cap, 1.0)
+                    except Exception:
+                        pass
+                
+                # Presión saliente de esta fase
+                for lane in ts._phase_out_lanes[phase_idx]:
+                    try:
+                        veh = traci.lane.getLastStepVehicleNumber(lane)
+                        cap = ts.lane_capacity.get(lane, 10.0)
+                        pressure -= veh / max(cap, 1.0)
                     except Exception:
                         pass
 
@@ -113,3 +129,27 @@ class RandomPolicy(BaselinePolicy):
             tid: self.rng.randint(0, signals[tid].num_green_phases)
             for tid in agent_ids
         }
+
+
+class SumoNativePolicy(BaselinePolicy):
+    """Base class for SUMO native algorithms (Actuated, DelayBased)."""
+    def __init__(self, type_id: int, name: str):
+        self.type_id = type_id
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def get_actions(self, agent_ids, signals):
+        return None
+
+class AdaptiveActuatedPolicy(SumoNativePolicy):
+    """Proxy para SCATS (Time-Gap basado en densidad)."""
+    def __init__(self):
+        super().__init__(2, "Adaptive_Actuated_SCATS")
+
+class AdaptiveDelayBasedPolicy(SumoNativePolicy):
+    """Proxy para SCOOT (Minimización de retraso proyectado)."""
+    def __init__(self):
+        super().__init__(3, "Adaptive_DelayBased_SCOOT")

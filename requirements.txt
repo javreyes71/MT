@@ -2,6 +2,7 @@
 gymnasium==0.29.1
 traci
 sumolib
+libsumo
 
 # Inteligencia Artificial y RL
 stable-baselines3==2.4.0

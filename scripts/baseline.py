@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils.config import load_config
 from src.utils.metrics import MetricsCollector
-import traci
+import libsumo as traci
 import sumolib
 
 

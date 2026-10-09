@@ -1,113 +1,94 @@
-"""SharedPolicyWrapper v2 + ParameterSharingAgent con MaskablePPO.
+"""ParameterSharingAgent con MaskablePPO y VecEnv Sincrónico.
 
-Corrige:
-  B2 — SharedPolicyWrapper roto: recompensa intermedia era 0.0 y ahora
-       se usa un diseño sincrónico que no parte los episodios.
-  B3 — PPO vanilla ignora acciones inválidas → MaskablePPO con máscara.
-  B8 — Recompensa no normalizada → VecNormalize(reward=True).
+Fase 1 + Fase 2:
+Usa un VecEnv donde cada "ambiente" en el batch es un agente.
+Esto permite a PPO asignar créditos individuales y preservar las 
+transiciones de Markov (obs_{i,t} -> obs_{i,t+1}).
 """
 
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
 import os
 from typing import Dict, Any, Tuple, List
 
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-
+from stable_baselines3.common.vec_env import VecEnv, VecNormalize, VecMonitor
 from src.environment.multi_agent_env import MultiAgentTrafficEnv
 
 
-class SharedPolicyWrapper(gym.Env):
-    """Wrapper sincrónico que expone un step() Gymnasium estándar.
-
-    En cada step() recolecta la acción de UN agente y la almacena.
-    Cuando todos los agentes han decidido, ejecuta el paso real en SUMO,
-    calcula la recompensa global y la devuelve igualmente a cada agente
-    en las siguientes N llamadas.
-
-    Compatible con MaskablePPO: implementa action_masks().
+class ParameterSharingVecEnv(VecEnv):
+    """Wrapper que convierte un MultiAgentEnv en un VecEnv para SB3.
+    
+    Cada agente opera como un sub-entorno independiente en el batch.
     """
-
     def __init__(self, multi_env: MultiAgentTrafficEnv):
-        super().__init__()
         self.multi_env = multi_env
-        self.observation_space = multi_env.observation_space
-        self.action_space = multi_env.action_space
-
         self.agent_ids = multi_env.agent_ids
-        self.num_agents = len(self.agent_ids)
-
-        # Estado interno
-        self._agent_idx = 0
-        self._obs_dict: Dict[str, np.ndarray] = {}
-        self._actions: Dict[str, int] = {}
-        self._reward = 0.0
-        self._terminated = False
-        self._truncated = False
-        self._info: Dict[str, Any] = {}
-
-    def reset(self, seed=None, options=None) -> Tuple[np.ndarray, Dict]:
-        self._obs_dict = self.multi_env.reset()
-        self._agent_idx = 0
+        num_envs = len(self.agent_ids)
+        super().__init__(num_envs, multi_env.observation_space, multi_env.action_space)
         self._actions = {}
-        self._reward = 0.0
-        self._terminated = False
-        self._truncated = False
-        self._info = {}
+        self._dones = np.zeros(self.num_envs, dtype=bool)
 
-        first_agent = self.agent_ids[0]
-        return self._obs_dict[first_agent], {}
+    def reset(self):
+        obs_dict = self.multi_env.reset()
+        self._dones = np.zeros(self.num_envs, dtype=bool)
+        return np.array([obs_dict[aid] for aid in self.agent_ids], dtype=np.float32)
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        current_agent = self.agent_ids[self._agent_idx]
-        self._actions[current_agent] = int(action)
-        self._agent_idx += 1
+    def step_async(self, actions: np.ndarray):
+        self._actions = {aid: act for aid, act in zip(self.agent_ids, actions)}
 
-        if self._agent_idx >= self.num_agents:
-            # Todos decidieron → ejecutar paso real en SUMO
-            obs, rewards, dones, truncs, infos = self.multi_env.step(self._actions)
+    def step_wait(self):
+        obs_d, rew_d, term_d, trunc_d, info_d = self.multi_env.step(self._actions)
+        
+        obs = np.array([obs_d[aid] for aid in self.agent_ids], dtype=np.float32)
+        rewards = np.array([rew_d[aid] for aid in self.agent_ids], dtype=np.float32)
+        dones = np.array([term_d[aid] or trunc_d[aid] for aid in self.agent_ids], dtype=bool)
+        
+        infos = []
+        for i, aid in enumerate(self.agent_ids):
+            info = info_d[aid].copy()
+            info["agent_id"] = aid
+            if dones[i]:
+                info["terminal_observation"] = obs[i]
+            infos.append(info)
 
-            self._obs_dict = obs
-            reward_vals = list(rewards.values())
-            self._reward = sum(reward_vals) / len(reward_vals)
-            self._terminated = all(dones.values())
-            self._truncated = all(truncs.values())
-            self._info = infos.get(self.agent_ids[0], {})
+        self._dones = dones
+        
+        # Auto-reset for VecEnv if terminated
+        if dones.all():
+            obs_d = self.multi_env.reset()
+            obs = np.array([obs_d[aid] for aid in self.agent_ids], dtype=np.float32)
 
-            # Reiniciar ronda
-            self._agent_idx = 0
-            self._actions = {}
-
-        next_agent = self.agent_ids[self._agent_idx]
-        return (
-            self._obs_dict[next_agent],
-            self._reward,
-            self._terminated,
-            self._truncated,
-            self._info,
-        )
-
-    def action_masks(self) -> np.ndarray:
-        """Retorna la máscara de acciones válidas para el agente actual.
-
-        Requerido por MaskablePPO de sb3-contrib.
-        """
-        current_agent = self.agent_ids[self._agent_idx]
-        mask = self.multi_env.get_action_mask(current_agent)
-        return mask.astype(bool)
+        return obs, rewards, dones, infos
 
     def close(self):
         self.multi_env.close()
 
+    def get_attr(self, attr_name, indices=None):
+        if attr_name == "action_masks":
+            # Sb3_contrib comprueba si los sub-entornos tienen la función
+            return [True for _ in range(self.num_envs)]
+        return [getattr(self.multi_env, attr_name) for _ in range(self.num_envs)]
+
+    def set_attr(self, attr_name, value, indices=None):
+        pass
+
+    def env_method(self, method_name, *method_args, indices=None, **method_kwargs):
+        if method_name == "action_masks":
+            # sb3_contrib espera una lista de máscaras (una por cada sub-entorno)
+            return [self.multi_env.get_action_mask(aid) for aid in self.agent_ids]
+        return [None for _ in range(self.num_envs)]
+
+    def env_is_wrapped(self, wrapper_class, indices=None):
+        return [False] * self.num_envs
+
+    def action_masks(self) -> np.ndarray:
+        """Fallback en caso de que MaskablePPO lo llame directamente en el VecEnv."""
+        masks = [self.multi_env.get_action_mask(aid) for aid in self.agent_ids]
+        return np.array(masks, dtype=bool)
+
 
 class ParameterSharingAgent:
-    """MAPPO con MaskablePPO y VecNormalize.
-
-    Usa MaskablePPO de sb3-contrib para enmascarar acciones inválidas
-    (fases que no existen en un TLS particular) y VecNormalize para
-    normalizar la recompensa en runtime.
-    """
+    """MAPPO con MaskablePPO, VecEnv propio y VecNormalize."""
 
     def __init__(self, multi_env: MultiAgentTrafficEnv, config: dict):
         from sb3_contrib import MaskablePPO
@@ -115,7 +96,17 @@ class ParameterSharingAgent:
         training = config.get("training", {})
         paths = config.get("paths", {})
 
-        self.shared_env = SharedPolicyWrapper(multi_env)
+        # Env Wrapping
+        vec_env = ParameterSharingVecEnv(multi_env)
+        monitored_env = VecMonitor(vec_env)
+
+        self.vec_env = VecNormalize(
+            monitored_env,
+            norm_obs=False,
+            norm_reward=True,
+            clip_reward=10.0,
+            gamma=training.get("gamma", 0.99),
+        )
 
         # LR schedule
         lr = training.get("learning_rate", 3e-4)
@@ -125,23 +116,14 @@ class ParameterSharingAgent:
         else:
             lr_schedule = lr
 
-        # VecNormalize: normaliza reward, NO obs (ya normalizada por OPW)
         tb_dir = paths.get("tensorboard_dir", "tensorboard")
-        vec_env = DummyVecEnv([lambda: self.shared_env])
-        self.vec_env = VecNormalize(
-            vec_env,
-            norm_obs=False,
-            norm_reward=True,
-            clip_reward=10.0,
-            gamma=training.get("gamma", 0.99),
-        )
 
         self.model = MaskablePPO(
             "MlpPolicy",
             self.vec_env,
             learning_rate=lr_schedule,
-            n_steps=training.get("n_steps", 256),
-            batch_size=training.get("batch_size", 128),
+            n_steps=training.get("n_steps", 1024),
+            batch_size=training.get("batch_size", 1024),
             gamma=training.get("gamma", 0.99),
             ent_coef=training.get("ent_coef", 0.01),
             n_epochs=training.get("n_epochs", 5),
@@ -154,18 +136,18 @@ class ParameterSharingAgent:
             seed=training.get("seed", 42),
         )
 
-    def train(self, total_timesteps: int, callbacks=None, reset_num_timesteps=True):
-        """Entrena MaskablePPO con Parameter Sharing."""
+    def train(self, total_timesteps: int, callbacks=None, reset_num_timesteps=True, progress_bar=True):
         self.model.learn(
             total_timesteps=total_timesteps,
             callback=callbacks,
             reset_num_timesteps=reset_num_timesteps,
+            progress_bar=progress_bar,
         )
 
-    def predict(
-        self, observations: Dict[str, np.ndarray], deterministic=True
-    ) -> Dict[str, int]:
+    def predict(self, observations: Dict[str, np.ndarray], deterministic=True) -> Dict[str, int]:
         actions = {}
+        # Para evaluación directa iteramos sobre el diccionario. 
+        # (evaluate.py ya maneja la vectorización de forma independiente)
         for aid, obs in observations.items():
             act, _ = self.model.predict(obs, deterministic=deterministic)
             actions[aid] = int(act)
@@ -173,23 +155,22 @@ class ParameterSharingAgent:
 
     def save(self, path: str):
         self.model.save(path)
-        # Guardar también las estadísticas de VecNormalize
         stats_path = path + "_vecnorm.pkl"
         self.vec_env.save(stats_path)
 
     @classmethod
     def load(cls, path: str, multi_env: MultiAgentTrafficEnv, config: dict):
         from sb3_contrib import MaskablePPO
-
+        
         agent = cls.__new__(cls)
-        agent.shared_env = SharedPolicyWrapper(multi_env)
-        vec_env = DummyVecEnv([lambda: agent.shared_env])
+        vec_env = ParameterSharingVecEnv(multi_env)
+        monitored_env = VecMonitor(vec_env)
 
         stats_path = path + "_vecnorm.pkl"
         if os.path.exists(stats_path):
-            agent.vec_env = VecNormalize.load(stats_path, vec_env)
+            agent.vec_env = VecNormalize.load(stats_path, monitored_env)
         else:
-            agent.vec_env = VecNormalize(vec_env, norm_obs=False, norm_reward=True)
+            agent.vec_env = VecNormalize(monitored_env, norm_obs=False, norm_reward=True)
 
         agent.model = MaskablePPO.load(path, env=agent.vec_env)
         return agent

@@ -1,0 +1,55 @@
+﻿simulation:
+  net_file: "sumo/network.net.xml"
+  config_file: "sumo/simulation.sumocfg"
+  route_files: "sumo/large_routes.rou.xml"
+  delta_time: 5.0
+  min_phase_time: 15.0     # Hard constraint: mÃ­nimo 15s de verde
+  max_phase_time: 35.0     # Hard constraint: mÃ¡ximo 35s para evitar starvation
+  yellow_time: 3.0         # Hard constraint: amarillo fijo obligatorio
+  duration: 3600           # Episodio completo en segundos simulados
+
+training:
+  algorithm: "PPO"
+  policy: "MlpPolicy"
+  learning_rate: 0.0003
+  lr_decay: "linear"
+  n_steps: 1024            # Con 39 agentes, 1024 genera batches masivos de 39936 muestras
+  batch_size: 1024
+  gamma: 0.99              # Ahora sÃ­ opera por decisiÃ³n real (0.99^1 en lugar de 0.99^39)
+  ent_coef: 0.01
+  n_epochs: 5
+  gae_lambda: 0.95
+  max_grad_norm: 0.5
+  vf_coef: 0.5
+  clip_range: 0.2
+  total_timesteps: 300000000
+  eval_freq: 500000
+  checkpoint_freq: 100000
+  seed: 42
+
+reward:
+  components:
+    eco_delay:
+      enabled: true
+      delay_weight: 0.1
+      eco_weight: 0.9
+    congestion:
+      enabled: false       # Apagadas las viejas recompensas rotas
+    pressure:
+      enabled: false
+    neighborhood:
+      enabled: false
+    stability:
+      enabled: false
+    emissions:
+      enabled: false
+
+marl:
+  mode: "parameter_sharing"
+  neighbor_observation: true
+  communication_radius: 1
+
+paths:
+  models_large_dir: "models_large"
+  results_large_dir: "results_large"
+  tensorboard_large_dir: "tensorboard_large"

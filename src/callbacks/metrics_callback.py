@@ -24,16 +24,16 @@ class MetricsCallback(BaseCallback):
     def _on_step(self) -> bool:
         """Recolecta métricas en cada paso del entorno."""
         try:
-            import traci
+            import libsumo as traci
             step = int(traci.simulation.getTime())
             self.collector.collect_step(step)
             self.step_in_episode += 1
         except Exception:
             pass
             
-        # Si el episodio termina
+        # Si el episodio termina (todos los agentes comparten episodio)
         dones = self.locals.get("dones")
-        if dones is not None and dones[0]:
+        if dones is not None and dones.all():
             self.episode_count += 1
             summary = self.collector.get_summary()
             

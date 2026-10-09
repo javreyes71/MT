@@ -31,3 +31,8 @@ Thumbs.db
 # sumo/network.net.xml
 # sumo/routes.rou.xml
 # sumo/map.osm
+models_*/
+tensorboard_*/
+results_*/
+*.trips.xml
+*.rou.alt.xml
